@@ -76,4 +76,4 @@ Read [AGENTS.md](AGENTS.md) before changing the project. Keep credentials and pr
 
 ## Current deployment status
 
-Hosted migrations and the account-deletion function are deployed, and initial SQL/security smoke checks pass. GitHub publishing is blocked by the connected integration's write permissions. Auth settings, email delivery, EAS setup, Apple provisioning and real-device testing remain required before describing this app as production-ready. See [TEST_RESULTS.md](docs/TEST_RESULTS.md) for verified results and limits.
+Hosted migrations and the account-deletion function are deployed, and initial SQL/security smoke checks pass. Auth settings, email delivery, EAS setup, Apple provisioning and real-device testing remain required before describing this app as production-ready. See [TEST_RESULTS.md](docs/TEST_RESULTS.md) for verified results and limits.
