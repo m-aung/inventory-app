@@ -25,5 +25,7 @@ const config: ExpoConfig = {
   android: { package: bundle },
   web: { bundler: "metro", output: "single", favicon: "./assets/favicon.png" },
   experiments: { typedRoutes: true },
+  owner: "myo.aung",
+  extra: { eas: { projectId: "e9503383-2002-40e4-8dc7-2243be15132e" } },
 };
 export default config;
