@@ -152,7 +152,12 @@ export function ItemEditor({
             change(
               "quantity",
               String(
-                Math.max(0, Number(values.quantity.replace(",", ".")) - 1),
+                Math.max(
+                  0,
+                  Math.round(
+                    (Number(values.quantity.replace(",", ".")) - 1) * 1000,
+                  ) / 1000,
+                ),
               ),
             )
           }

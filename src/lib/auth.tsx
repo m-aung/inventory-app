@@ -8,7 +8,7 @@ import {
 } from "react";
 import { AppState, Platform } from "react-native";
 import { focusManager } from "@tanstack/react-query";
-import type { Session } from "@supabase/supabase-js";
+import { isAuthSessionMissingError, type Session } from "@supabase/supabase-js";
 import { supabase, isConfigured } from "./supabase";
 import { queryClient } from "./query";
 
@@ -54,8 +54,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.session) {
           const result = await supabase.auth.getUser();
           if (result.error) {
-            if (result.error.status === 401 || result.error.status === 403) {
-              await supabase.auth.signOut({ scope: "local" });
+            if (
+              result.error.status === 401 ||
+              result.error.status === 403 ||
+              result.error.status === 404 ||
+              isAuthSessionMissingError(result.error) ||
+              result.error.code === "user_not_found" ||
+              result.error.code === "session_not_found"
+            ) {
+              const { error: signOutError } = await supabase.auth.signOut({
+                scope: "local",
+              });
+              if (signOutError) throw signOutError;
             } else throw result.error;
           } else if (active) setSession(data.session);
         }
