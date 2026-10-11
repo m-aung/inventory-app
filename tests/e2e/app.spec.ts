@@ -567,3 +567,117 @@ test("invalid callback link gives a recovery action", async ({ page }) => {
     page.getByRole("button", { name: "Sign in", exact: true }),
   ).toBeVisible();
 });
+
+for (const quantity of ["1.001", "1,001"]) {
+  test(`decrements ${quantity} to a valid quantity and saves it`, async ({
+    page,
+  }) => {
+    const state = await backend(page);
+    await signIn(page);
+    await page
+      .getByRole("button", { name: "＋ Add item", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Item name", exact: true })
+      .fill("Fraction");
+    const field = page.getByRole("textbox", { name: "Quantity", exact: true });
+    await field.fill(quantity);
+    await page.getByRole("button", { name: "−", exact: true }).click();
+    await expect(field).toHaveValue("0.001");
+    await page.getByRole("button", { name: "Save item", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Fraction, 0.001 pcs", exact: true }),
+    ).toBeVisible();
+    expect(state.items[0].quantity).toBe(0.001);
+  });
+}
+for (const code of ["user_not_found", "session_not_found"]) {
+  test(`clears a restored session after ${code} and permits a new sign-in`, async ({
+    page,
+  }) => {
+    await backend(page);
+    await signIn(page);
+    await page.route("**/auth/v1/user", (route) =>
+      route.fulfill({
+        status: 404,
+        headers: { "x-supabase-api-version": "2024-01-01" },
+        contentType: "application/json",
+        body: JSON.stringify({ code, message: "No longer available" }),
+      }),
+    );
+    await page.reload();
+    await expect(
+      page.getByRole("button", { name: "Sign in", exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem("sb-nxjfbnuavolnpziwpbjb-auth-token"),
+      ),
+    ).toBeNull();
+    await page.unroute("**/auth/v1/user");
+    await signIn(page);
+    await expect(page.getByText("Your inventory starts here")).toBeVisible();
+  });
+}
+test("retains the session during a temporary verification failure and recovers on retry", async ({
+  page,
+}) => {
+  await backend(page);
+  await signIn(page);
+  await page.route("**/auth/v1/user", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Temporary outage" }),
+    }),
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("heading", {
+      name: "Couldn’t verify your session",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("sb-nxjfbnuavolnpziwpbjb-auth-token"),
+    ),
+  ).not.toBeNull();
+  await page.unroute("**/auth/v1/user");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByText("Your inventory starts here")).toBeVisible();
+});
+test("allows returning to sign-in from a session verification failure", async ({
+  page,
+}) => {
+  await backend(page);
+  await signIn(page);
+  await page.route("**/auth/v1/user", (route) =>
+    route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: "unexpected_error",
+        message: "Unknown error",
+      }),
+    }),
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("heading", {
+      name: "Couldn’t verify your session",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Back to sign in", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      localStorage.getItem("sb-nxjfbnuavolnpziwpbjb-auth-token"),
+    ),
+  ).toBeNull();
+});
