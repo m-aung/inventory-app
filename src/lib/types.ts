@@ -6,6 +6,7 @@ export type Inventory = {
   created_at: string;
 };
 export type Item = {
+  section_id?: string | null;
   id: string;
   inventory_id: string;
   name: string;
@@ -15,6 +16,14 @@ export type Item = {
   version: number;
   created_at: string;
   updated_at: string;
+};
+export type Section = {
+  id: string;
+  inventory_id: string;
+  name: string;
+  color: string;
+  version: number;
+  created_at: string;
 };
 export type Invitation = {
   id: string;

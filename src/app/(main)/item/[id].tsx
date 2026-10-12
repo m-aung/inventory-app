@@ -17,12 +17,14 @@ import {
 import { useFeedback } from "../../../components/feedback";
 import { useAuth } from "../../../lib/auth";
 import { QuantityControls } from "../../../features/quantity-controls";
+import { useSections } from "../../../features/sections";
 export default function Details() {
   const { id, inventory } = useLocalSearchParams<{
     id: string;
     inventory: string;
   }>();
   const { session } = useAuth();
+  const sections = useSections(inventory);
   const { confirm, toast } = useFeedback();
   const [error, setError] = useState("");
   const query = useQuery({
@@ -105,6 +107,15 @@ export default function Details() {
           <Text style={styles.body}>{item.notes}</Text>
         </View>
       )}
+      <View style={styles.card}>
+        <Text style={styles.label}>Section</Text>
+        <Text style={styles.body}>
+          {item.section_id
+            ? (sections.data?.find((s) => s.id === item.section_id)?.name ??
+              "Section unavailable")
+            : "Unsorted"}
+        </Text>
+      </View>
       <Text style={styles.small}>
         Updated {new Date(item.updated_at).toLocaleString()}
       </Text>

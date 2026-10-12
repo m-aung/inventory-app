@@ -1,5 +1,12 @@
 import { supabase } from "./supabase";
-import type { Inventory, Item, Invitation, OwnerInvite, Person } from "./types";
+import type {
+  Inventory,
+  Item,
+  Invitation,
+  OwnerInvite,
+  Person,
+  Section,
+} from "./types";
 import type { ItemInput } from "./validation";
 
 async function rpc<T>(
@@ -62,8 +69,10 @@ export const api = {
     inventory: string,
     values: ItemInput,
     version: number | null,
+    section: string | null | undefined = undefined,
+    request?: string,
   ) =>
-    rpc<Item>("save_item", {
+    rpc<Item>(section === undefined ? "save_item" : "save_item_with_section", {
       p_id: id,
       p_inventory: inventory,
       p_name: values.name,
@@ -71,6 +80,45 @@ export const api = {
       p_unit: values.unit,
       p_notes: values.notes,
       p_version: version,
+      ...(section === undefined
+        ? {}
+        : { p_section: section, p_request: request ?? null }),
+    }),
+  async sections(inventory: string): Promise<Section[]> {
+    const all: Section[] = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase
+        .from("inventory_sections")
+        .select("*")
+        .eq("inventory_id", inventory)
+        .order("created_at")
+        .order("id")
+        .range(offset, offset + 499)
+        .retry(false);
+      if (error) throw error;
+      all.push(...(data as Section[]));
+      if (data.length < 500) return all;
+    }
+  },
+  saveSection: (
+    id: string,
+    inventory: string,
+    name: string,
+    color: string,
+    version: number | null,
+  ) =>
+    rpc<Section>("save_section", {
+      p_id: id,
+      p_inventory: inventory,
+      p_name: name,
+      p_color: color,
+      p_version: version,
+    }),
+  deleteSection: (section: Section) =>
+    rpc<void>("delete_section", {
+      p_id: section.id,
+      p_inventory: section.inventory_id,
+      p_version: section.version,
     }),
   deleteItem: (item: Item) =>
     rpc<void>("delete_item", {

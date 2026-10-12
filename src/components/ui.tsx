@@ -16,13 +16,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
 export const colors = {
-  bg: "#F7F8F4",
+  bg: "#F5F6F7",
   card: "#FFFFFF",
-  ink: "#152B2A",
-  muted: "#586C6A",
-  teal: "#00796F",
-  pale: "#E4F3ED",
-  line: "#DFE6E2",
+  ink: "#172321",
+  muted: "#586562",
+  teal: "#006B59",
+  pale: "#EDF3F0",
+  line: "#E1E7E4",
+  hero: "#123F34",
+  heroText: "#F4FFF8",
+  heroMuted: "#C4DBCF",
+  heroLine: "#547466",
   red: "#B42332",
   redBg: "#FDECEE",
 };
@@ -49,7 +53,7 @@ export const styles = StyleSheet.create({
   small: { fontSize: 13, lineHeight: 20, color: colors.muted },
   card: {
     backgroundColor: colors.card,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 20,
     gap: 12,
     borderWidth: 1,
@@ -64,9 +68,9 @@ export const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: "#BCCAC5",
+    borderColor: colors.line,
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 14,
     minHeight: 50,
     color: colors.ink,
@@ -167,7 +171,7 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => ({
         minHeight: 52,
-        borderRadius: 12,
+        borderRadius: 28,
         padding: 14,
         alignItems: "center",
         justifyContent: "center",

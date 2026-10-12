@@ -65,6 +65,229 @@ afterAll(async () => {
   await db?.close();
 });
 describe("real PostgreSQL permissions and mutations", () => {
+  const sectionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  async function section(
+    inventory: string,
+    name = "Supplies",
+    color = "#377CCC",
+    version: number | null = null,
+    id = sectionId,
+  ) {
+    return db.query("select * from public.save_section($1,$2,$3,$4,$5)", [
+      id,
+      inventory,
+      name,
+      color,
+      version,
+    ]);
+  }
+  async function assign(
+    inventory: string,
+    section: string | null,
+    version: number | null = null,
+    quantity = 2,
+  ) {
+    return db.query(
+      "select * from public.save_item_with_section($1,$2,'Milk',$3,'bottles','Breakfast',$4,$5)",
+      [item, inventory, quantity, version, section],
+    );
+  }
+  async function join(inventory: string) {
+    const invite = (
+      await db.query<{ id: string }>(
+        "select (public.invite_member($1,'bob@example.com')).id",
+        [inventory],
+      )
+    ).rows[0].id;
+    await asUser(bob);
+    await db.query("select public.respond_to_invitation($1,true)", [invite]);
+  }
+  it("isolates sections and prohibits base mutations, anonymous execution and unverified access", async () => {
+    const inventory = await privateInventory();
+    await section(inventory);
+    await expect(
+      db.query("update inventory_sections set name='Bad'"),
+    ).rejects.toThrow("permission denied");
+    await expect(db.query("delete from inventory_sections")).rejects.toThrow(
+      "permission denied",
+    );
+    await expect(
+      db.query(
+        "insert into inventory_sections(id,inventory_id,name,color) values(gen_random_uuid(),$1,'Bad','#377CCC')",
+        [inventory],
+      ),
+    ).rejects.toThrow("permission denied");
+    await asUser(bob);
+    expect(
+      (await db.query("select * from inventory_sections")).rows,
+    ).toHaveLength(0);
+    await expect(section(inventory)).rejects.toThrow("Only the owner");
+    await db.exec("reset role");
+    await db.query(
+      "update auth.users set email_confirmed_at=null where id=$1",
+      [alice],
+    );
+    await asUser(alice);
+    expect(
+      (await db.query("select * from inventory_sections")).rows,
+    ).toHaveLength(0);
+    await expect(section(inventory)).rejects.toThrow("verified email");
+    await db.exec("reset role; set role anon");
+    await expect(section(inventory)).rejects.toThrow("permission denied");
+    await expect(assign(inventory, null)).rejects.toThrow("permission denied");
+    await expect(
+      db.query("select public.delete_section($1,$2,1)", [sectionId, inventory]),
+    ).rejects.toThrow("permission denied");
+  });
+  it("validates section names/colors, retries safely and rejects stale structure edits", async () => {
+    const inventory = await privateInventory();
+    for (const name of ["", "All items", "Unsorted", "x".repeat(81)])
+      await expect(section(inventory, name)).rejects.toThrow(
+        "check constraint",
+      );
+    await expect(section(inventory, "Supplies", "#FFFFFF")).rejects.toThrow(
+      "check constraint",
+    );
+    await section(inventory);
+    await section(inventory);
+    await expect(
+      section(
+        inventory,
+        "supplies",
+        "#377CCC",
+        null,
+        "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      ),
+    ).rejects.toThrow("unique constraint");
+    await section(inventory, "Tools", "#8D64C8", 1);
+    await section(inventory, "Tools", "#8D64C8", 1);
+    expect(
+      (
+        await db.query<{ version: number }>(
+          "select version from inventory_sections",
+        )
+      ).rows[0].version,
+    ).toBe(2);
+    await expect(section(inventory, "Other", "#377CCC", 1)).rejects.toThrow(
+      "changed",
+    );
+    await expect(
+      db.query("select public.delete_section($1,$2,1)", [sectionId, inventory]),
+    ).rejects.toThrow("changed");
+  });
+  it("allows shared members to move items but reserves section management for owners", async () => {
+    const inventory = await shared();
+    await section(inventory);
+    await join(inventory);
+    expect(
+      (await db.query("select * from inventory_sections")).rows,
+    ).toHaveLength(1);
+    await expect(section(inventory, "Changed", "#377CCC", 1)).rejects.toThrow(
+      "Only the owner",
+    );
+    await expect(
+      db.query("select public.delete_section($1,$2,1)", [sectionId, inventory]),
+    ).rejects.toThrow("Only the owner");
+    await assign(inventory, sectionId);
+    await assign(inventory, null, 1);
+    expect(
+      (
+        await db.query<{ section_id: string | null }>(
+          "select section_id from items",
+        )
+      ).rows[0].section_id,
+    ).toBeNull();
+    await asUser(alice);
+    await db.query("select public.remove_member($1,$2)", [inventory, bob]);
+    await asUser(bob);
+    expect(
+      (await db.query("select * from inventory_sections")).rows,
+    ).toHaveLength(0);
+    await expect(assign(inventory, sectionId, 2)).rejects.toThrow(
+      "access denied",
+    );
+  });
+  it("prevents assignment across inventories and detects conflicting assignment retries", async () => {
+    const inventory = await privateInventory(),
+      other = await shared();
+    await section(other);
+    await expect(assign(inventory, sectionId)).rejects.toThrow(
+      "section is no longer available",
+    );
+    await assign(other, sectionId);
+    await assign(other, sectionId);
+    await assign(other, null, 1);
+    await assign(other, null, 1);
+    await expect(assign(other, sectionId, 1)).rejects.toThrow("changed");
+    const row = (
+      await db.query<{ version: number; section_id: string | null }>(
+        "select version,section_id from items",
+      )
+    ).rows[0];
+    expect(row).toMatchObject({ version: 2, section_id: null });
+  });
+  it("removal preserves item data, increments versions and rejects old member drafts", async () => {
+    const inventory = await shared();
+    await section(inventory);
+    await assign(inventory, sectionId);
+    await db.query("select public.delete_section($1,$2,1)", [
+      sectionId,
+      inventory,
+    ]);
+    await db.query("select public.delete_section($1,$2,1)", [
+      sectionId,
+      inventory,
+    ]);
+    const row = (await db.query("select * from items")).rows[0];
+    expect(row).toMatchObject({
+      id: item,
+      section_id: null,
+      name: "Milk",
+      quantity: "2",
+      unit: "bottles",
+      notes: "Breakfast",
+      version: 2,
+    });
+    await expect(assign(inventory, sectionId, 1, 3)).rejects.toThrow("changed");
+    await expect(save(inventory, 3, 1)).rejects.toThrow("changed");
+    await assign(inventory, null, 2, 3);
+  });
+  it("distinguishes identical concurrent edits from retries of the same request", async () => {
+    const inventory = await shared();
+    await save(inventory);
+    await join(inventory);
+    const firstRequest = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const secondRequest = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const update = (request: string) =>
+      db.query(
+        "select * from public.save_item_with_section($1,$2,'Milk',3,'bottles','Breakfast',1,null,$3)",
+        [item, inventory, request],
+      );
+    await asUser(alice);
+    await update(firstRequest);
+    await update(firstRequest);
+    await asUser(bob);
+    await expect(update(secondRequest)).rejects.toThrow("changed");
+    expect(
+      (await db.query<{ version: number }>("select version from items")).rows[0]
+        .version,
+    ).toBe(2);
+  });
+  it("legacy clients preserve section assignments and deletion cascades safely", async () => {
+    const inventory = await shared();
+    await section(inventory);
+    await assign(inventory, sectionId);
+    await save(inventory, 3, 1);
+    expect(
+      (await db.query<{ section_id: string }>("select section_id from items"))
+        .rows[0].section_id,
+    ).toBe(sectionId);
+    await db.query("select public.delete_shared_inventory($1)", [inventory]);
+    expect((await db.query("select * from items")).rows).toHaveLength(0);
+    expect(
+      (await db.query("select * from inventory_sections")).rows,
+    ).toHaveLength(0);
+  });
   it("creates exactly one private inventory per user", async () => {
     const id = await privateInventory();
     expect(await privateInventory()).toBe(id);

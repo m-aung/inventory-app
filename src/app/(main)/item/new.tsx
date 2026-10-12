@@ -3,7 +3,10 @@ import { ItemEditor } from "../../../features/item-editor";
 import { useWorkspace } from "../../../features/workspace";
 import { ErrorState, Loading, Screen } from "../../../components/ui";
 export default function AddItem() {
-  const { inventory } = useLocalSearchParams<{ inventory: string }>();
+  const { inventory, section } = useLocalSearchParams<{
+    inventory: string;
+    section?: string;
+  }>();
   const { inventories, loading, refresh } = useWorkspace();
   if (loading)
     return (
@@ -20,5 +23,11 @@ export default function AddItem() {
         />
       </Screen>
     );
-  return <ItemEditor inventory={inventory} />;
+  return (
+    <ItemEditor
+      key={inventory}
+      inventory={inventory}
+      defaultSection={section}
+    />
+  );
 }

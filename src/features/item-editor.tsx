@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Platform, Pressable, Text, TextInput, View } from "react-native";
+import {
+  Modal,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { router, useNavigation } from "expo-router";
 import * as Crypto from "expo-crypto";
@@ -17,13 +24,17 @@ import { api, errorMessage } from "../lib/api";
 import { queryClient } from "../lib/query";
 import { itemSchema, units, type ItemDraft } from "../lib/validation";
 import type { Item } from "../lib/types";
+import { useSections, SectionChoice, sectionsFailureMessage } from "./sections";
+import { ConflictNotice } from "../components/conflict-notice";
 
 export function ItemEditor({
   inventory,
   initial: liveInitial,
+  defaultSection,
 }: {
   inventory: string;
   initial?: Item;
+  defaultSection?: string;
 }) {
   // Capture the original version. Background refreshes must never erase a draft
   // or silently change the version against which it will be saved.
@@ -35,26 +46,50 @@ export function ItemEditor({
     notes: initial?.notes ?? "",
   };
   const [values, setValues] = useState(initialValues);
+  const [section, setSection] = useState(
+    initial?.section_id ?? defaultSection ?? "",
+  );
+  const [choosingSection, setChoosingSection] = useState(false);
+  const sections = useSections(inventory);
+  const selectedSection = sections.data?.find((s) => s.id === section);
   const [id] = useState(() => initial?.id ?? Crypto.randomUUID());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [problem, setProblem] = useState("");
   const [conflict, setConflict] = useState(false);
+  const [attempted, setAttempted] = useState<{
+    amount: string;
+    unit: string;
+  } | null>(null);
   const [saved, setSaved] = useState(false);
   const nameInput = useRef<TextInput>(null);
   const quantityInput = useRef<TextInput>(null);
   const { confirm, toast } = useFeedback();
   const navigation = useNavigation();
   const exit = useRef(false);
+  const request = useRef<{ payload: string; id: string } | null>(null);
   const mutation = useMutation({
-    mutationFn: () =>
-      api.saveItem(
+    mutationFn: () => {
+      const payload = JSON.stringify([
+        id,
+        initial?.version ?? null,
+        values,
+        section,
+      ]);
+      if (request.current?.payload !== payload)
+        request.current = { payload, id: Crypto.randomUUID() };
+      return api.saveItem(
         id,
         inventory,
         itemSchema.parse(values),
         initial?.version ?? null,
-      ),
+        section || null,
+        request.current.id,
+      );
+    },
   });
-  const dirty = JSON.stringify(values) !== JSON.stringify(initialValues);
+  const dirty =
+    JSON.stringify(values) !== JSON.stringify(initialValues) ||
+    section !== (initial?.section_id ?? defaultSection ?? "");
   useEffect(() => {
     if (Platform.OS !== "web" || !dirty || saved) return;
     const prevent = (event: BeforeUnloadEvent) => {
@@ -93,7 +128,13 @@ export function ItemEditor({
     }));
   }
   async function save() {
-    if (mutation.isPending || conflict) return;
+    if (
+      mutation.isPending ||
+      conflict ||
+      sections.isPending ||
+      sections.isError
+    )
+      return;
     const result = itemSchema.safeParse(values);
     if (!result.success) {
       const next: Record<string, string> = {};
@@ -105,6 +146,7 @@ export function ItemEditor({
       return;
     }
     setProblem("");
+    setAttempted({ amount: values.quantity, unit: values.unit });
     try {
       await mutation.mutateAsync();
       exit.current = true;
@@ -224,7 +266,74 @@ export function ItemEditor({
         placeholder="Add any notes…"
       />
       <Text style={styles.small}>{values.notes.length}/500</Text>
-      {problem ? <Notice text={problem} /> : null}
+      <Text style={styles.label}>Section</Text>
+      <Button
+        title={
+          section
+            ? (selectedSection?.name ?? "Section unavailable — choose another")
+            : "Unsorted"
+        }
+        secondary
+        disabled={mutation.isPending || conflict}
+        onPress={() => setChoosingSection(true)}
+      />
+      {sections.isError && (
+        <>
+          <Notice text={sectionsFailureMessage(sections.setupRequired)} />
+          <Button
+            title="Retry sections"
+            secondary
+            onPress={() => void sections.refetch()}
+          />
+        </>
+      )}
+      {!!section && sections.isSuccess && !selectedSection && (
+        <Notice text="This section was removed. Choose another section or Unsorted. Your draft is still here." />
+      )}
+      <Modal
+        visible={choosingSection}
+        presentationStyle="fullScreen"
+        animationType="slide"
+        onRequestClose={() => setChoosingSection(false)}
+      >
+        <Screen
+          title="Choose section"
+          back={false}
+          action={
+            <Button
+              title="Done"
+              secondary
+              onPress={() => setChoosingSection(false)}
+            />
+          }
+        >
+          <SectionChoice
+            name="Unsorted"
+            selected={!section}
+            onPress={() => {
+              setSection("");
+              setChoosingSection(false);
+            }}
+          />
+          {sections.data?.map((s) => (
+            <SectionChoice
+              key={s.id}
+              name={s.name}
+              color={s.color}
+              selected={s.id === section}
+              onPress={() => {
+                setSection(s.id);
+                setChoosingSection(false);
+              }}
+            />
+          ))}
+        </Screen>
+      </Modal>
+      {conflict && attempted ? (
+        <ConflictNotice amount={attempted.amount} unit={attempted.unit} />
+      ) : problem ? (
+        <Notice text={problem} />
+      ) : null}
       {conflict ? (
         <Button
           title="Reload item"
@@ -255,6 +364,11 @@ export function ItemEditor({
                 : "Save item"
           }
           busy={mutation.isPending}
+          disabled={
+            sections.isPending ||
+            sections.isError ||
+            (!!section && sections.isSuccess && !selectedSection)
+          }
           onPress={save}
         />
       )}

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useAuth } from "../lib/auth";
 import { api, errorMessage } from "../lib/api";
@@ -7,20 +7,26 @@ import type { Item } from "../lib/types";
 import { itemSchema } from "../lib/validation";
 import { useFeedback } from "../components/feedback";
 import { Button, colors, Field, Notice, styles } from "../components/ui";
+import { ConflictNotice } from "../components/conflict-notice";
+import * as Crypto from "expo-crypto";
 
 export function QuantityControls({
   item,
   markOnly = false,
+  onDraftChange,
 }: {
   item: Item;
   markOnly?: boolean;
+  onDraftChange?: (item: Item, editing: boolean) => void;
 }) {
   const { session } = useAuth();
   const { toast } = useFeedback();
   const locked = useRef(false);
+  const request = useRef<{ payload: string; id: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [conflict, setConflict] = useState(false);
+  const [attempted, setAttempted] = useState("");
   const [draft, setDraft] = useState<{ item: Item; quantity: string } | null>(
     null,
   );
@@ -38,6 +44,18 @@ export function QuantityControls({
     locked.current = true;
     setBusy(true);
     setError("");
+    setAttempted(value);
+    const payload = JSON.stringify([
+      source.id,
+      source.version,
+      source.name,
+      value,
+      source.unit,
+      source.notes,
+      source.section_id ?? null,
+    ]);
+    if (request.current?.payload !== payload)
+      request.current = { payload, id: Crypto.randomUUID() };
     try {
       const saved = await api.saveItem(
         source.id,
@@ -49,6 +67,8 @@ export function QuantityControls({
           notes: source.notes ?? "",
         }),
         source.version,
+        source.section_id ?? null,
+        request.current.id,
       );
       // Cancel older reads before installing the server-confirmed version.
       await Promise.all([
@@ -66,6 +86,7 @@ export function QuantityControls({
         !entry || entry.version <= saved.version ? saved : entry,
       );
       setDraft(null);
+      onDraftChange?.(source, false);
       toast(
         result.data === 0 ? "Item marked out of stock" : "Quantity updated",
       );
@@ -93,6 +114,7 @@ export function QuantityControls({
       );
       queryClient.setQueryData(detailKey, fresh);
       setDraft(null);
+      onDraftChange?.(item, false);
       setConflict(false);
       setError("");
     } catch (e) {
@@ -122,71 +144,99 @@ export function QuantityControls({
         />
       ) : (
         <View
-          style={[styles.row, { justifyContent: "flex-end", flexWrap: "wrap" }]}
+          style={[
+            styles.row,
+            {
+              alignSelf: "flex-end",
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+              gap: 0,
+              backgroundColor: colors.pale,
+              borderRadius: 16,
+            },
+          ]}
         >
           {([-1, 1] as const).map((delta) => (
-            <Pressable
-              key={delta}
-              accessibilityRole="button"
-              accessibilityLabel={`${delta < 0 ? "Decrease" : "Increase"} ${item.name} quantity`}
-              accessibilityState={{
-                disabled:
-                  disabled ||
-                  !!draft ||
-                  (delta < 0 ? quantity === 0 : quantity === 999999),
-                busy,
-              }}
-              disabled={
-                disabled ||
-                !!draft ||
-                (delta < 0 ? quantity === 0 : quantity === 999999)
-              }
-              onPress={() => void save(item, step(delta))}
-              style={({ pressed }) => ({
-                minWidth: 48,
-                minHeight: 48,
-                borderRadius: 12,
-                backgroundColor: colors.pale,
-                alignItems: "center",
-                justifyContent: "center",
-                opacity:
+            <Fragment key={delta}>
+              {delta === 1 && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Set ${item.name} quantity`}
+                  disabled={disabled}
+                  accessibilityState={{ disabled }}
+                  onPress={() => {
+                    setError("");
+                    setDraft({ item, quantity: String(quantity) });
+                    onDraftChange?.(item, true);
+                  }}
+                  style={{
+                    minHeight: 48,
+                    justifyContent: "center",
+                    paddingHorizontal: 8,
+                    flexShrink: 1,
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.body,
+                      {
+                        fontWeight: "600",
+                        fontSize: 22,
+                        textAlign: "center",
+                        fontVariant: ["tabular-nums"],
+                      },
+                    ]}
+                  >
+                    {quantity.toLocaleString(undefined, {
+                      maximumFractionDigits: 3,
+                    })}
+                  </Text>
+                  <Text style={[styles.small, { textAlign: "center" }]}>
+                    {item.unit} · tap to set
+                  </Text>
+                </Pressable>
+              )}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${delta < 0 ? "Decrease" : "Increase"} ${item.name} quantity`}
+                accessibilityState={{
+                  disabled:
+                    disabled ||
+                    !!draft ||
+                    (delta < 0 ? quantity === 0 : quantity === 999999),
+                  busy,
+                }}
+                disabled={
                   disabled ||
                   !!draft ||
                   (delta < 0 ? quantity === 0 : quantity === 999999)
-                    ? 0.5
-                    : pressed
-                      ? 0.8
-                      : 1,
-              })}
-            >
-              <Text style={[styles.body, { fontSize: 24, color: colors.teal }]}>
-                {delta < 0 ? "−" : "＋"}
-              </Text>
-            </Pressable>
+                }
+                onPress={() => void save(item, step(delta))}
+                style={({ pressed }) => ({
+                  width: 48,
+                  minHeight: 48,
+                  borderRadius: 16,
+                  backgroundColor: colors.pale,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity:
+                    disabled ||
+                    !!draft ||
+                    (delta < 0 ? quantity === 0 : quantity === 999999)
+                      ? 0.5
+                      : pressed
+                        ? 0.8
+                        : 1,
+                })}
+              >
+                <Text
+                  style={[styles.body, { fontSize: 24, color: colors.teal }]}
+                >
+                  {delta < 0 ? "−" : "＋"}
+                </Text>
+              </Pressable>
+            </Fragment>
           ))}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Set ${item.name} quantity`}
-            disabled={disabled}
-            accessibilityState={{ disabled }}
-            onPress={() => {
-              setError("");
-              setDraft({ item, quantity: String(quantity) });
-            }}
-            style={{
-              minHeight: 48,
-              justifyContent: "center",
-              paddingHorizontal: 12,
-            }}
-          >
-            <Text
-              style={[styles.body, { fontWeight: "700", color: colors.teal }]}
-            >
-              {quantity.toLocaleString(undefined, { maximumFractionDigits: 3 })}{" "}
-              {item.unit}
-            </Text>
-            <Text style={styles.small}>Tap to set amount</Text>
-          </Pressable>
         </View>
       )}
       {draft && (
@@ -214,6 +264,7 @@ export function QuantityControls({
             disabled={busy}
             onPress={() => {
               setDraft(null);
+              onDraftChange?.(item, false);
               if (!conflict) setError("");
             }}
           />
@@ -224,7 +275,14 @@ export function QuantityControls({
           Saving quantity…
         </Text>
       )}
-      {!!error && <Notice text={error} />}
+      {conflict ? (
+        <ConflictNotice
+          amount={attempted}
+          unit={draft?.item.unit ?? item.unit}
+        />
+      ) : (
+        !!error && <Notice text={error} />
+      )}
       {conflict && (
         <Button
           title="Reload quantity"

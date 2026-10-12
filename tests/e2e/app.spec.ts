@@ -1,8 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { Section } from "../../src/lib/types";
 const userId = "11111111-1111-4111-8111-111111111111";
 const inventoryId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const sharedId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 type MockItem = {
+  section_id?: string | null;
+  last_mutation_id?: string | null;
   id: string;
   inventory_id: string;
   name: string;
@@ -20,9 +23,14 @@ async function backend(
     conflict?: boolean;
     initialFailure?: boolean;
     shared?: boolean;
+    member?: boolean;
+    failedSectionSave?: boolean;
+    lostSaveResponse?: boolean;
+    failedSections?: "schema" | "transient";
   } = {},
 ) {
   const items: MockItem[] = [];
+  const sections: Section[] = [];
   const inventories = [
     {
       id: inventoryId,
@@ -35,7 +43,9 @@ async function backend(
   if (options.shared)
     inventories.push({
       id: sharedId,
-      owner_id: userId,
+      owner_id: options.member
+        ? "22222222-2222-4222-8222-222222222222"
+        : userId,
       name: "Family",
       kind: "shared",
       created_at: new Date().toISOString(),
@@ -47,6 +57,10 @@ async function backend(
     expires_at: string;
   }[] = [];
   let failed = false;
+  let sectionFailed = false;
+  let responseLost = false;
+  let sectionsFailing = options.failedSections;
+  let sectionReads = 0;
   let failLoads = !!options.initialFailure;
   const user = {
     id: userId,
@@ -120,13 +134,90 @@ async function backend(
           await reply([]);
           return;
         }
-        if (name === "save_item") {
+        if (name === "save_section" || name === "delete_section") {
+          if (
+            inventories.find((i) => i.id === p.p_inventory)?.owner_id !== userId
+          ) {
+            await reply({ message: "Only the owner", code: "42501" }, 403);
+            return;
+          }
+          if (options.failedSectionSave && !sectionFailed) {
+            sectionFailed = true;
+            await reply({ message: "Temporary failure", code: "500" }, 503);
+            return;
+          }
+          const found = sections.find((s) => s.id === p.p_id);
+          if (
+            p.p_version !== null &&
+            (!found || found.version !== p.p_version)
+          ) {
+            await reply({ message: "Section changed", code: "40001" }, 409);
+            return;
+          }
+          if (name === "delete_section") {
+            const index = sections.findIndex((s) => s.id === p.p_id);
+            if (index >= 0) sections.splice(index, 1);
+            items
+              .filter(
+                (i) =>
+                  i.inventory_id === p.p_inventory && i.section_id === p.p_id,
+              )
+              .forEach((i) => {
+                i.section_id = null;
+                i.version++;
+              });
+            await reply(null);
+            return;
+          }
+          if (
+            sections.some(
+              (s) =>
+                s.id !== p.p_id &&
+                s.inventory_id === p.p_inventory &&
+                s.name.toLowerCase() === p.p_name.toLowerCase(),
+            )
+          ) {
+            await reply(
+              { message: "Duplicate section name", code: "23505" },
+              409,
+            );
+            return;
+          }
+          const value: Section = {
+            id: p.p_id,
+            inventory_id: p.p_inventory,
+            name: p.p_name,
+            color: p.p_color,
+            version: (found?.version ?? 0) + 1,
+            created_at: found?.created_at ?? new Date().toISOString(),
+          };
+          if (found) Object.assign(found, value);
+          else sections.push(value);
+          await reply(value);
+          return;
+        }
+        if (name === "save_item" || name === "save_item_with_section") {
           if (options.failedSave && !failed) {
             failed = true;
             await reply({ message: "Temporary failure", code: "500" }, 503);
             return;
           }
           const found = items.find((i) => i.id === p.p_id);
+          const exactRetry =
+            found &&
+            p.p_version !== null &&
+            found.version === p.p_version + 1 &&
+            p.p_request &&
+            found.last_mutation_id === p.p_request &&
+            found.name === p.p_name &&
+            found.quantity === p.p_quantity &&
+            found.unit === p.p_unit &&
+            found.notes === p.p_notes &&
+            found.section_id === p.p_section;
+          if (exactRetry) {
+            await reply(found);
+            return;
+          }
           if (
             (options.conflict && p.p_version !== null) ||
             (found && p.p_version !== found.version)
@@ -141,12 +232,25 @@ async function backend(
             quantity: p.p_quantity,
             unit: p.p_unit,
             notes: p.p_notes,
+            section_id:
+              name === "save_item_with_section"
+                ? p.p_section
+                : (found?.section_id ?? null),
+            last_mutation_id: p.p_request ?? null,
             version: (found?.version ?? 0) + 1,
             created_at: found?.created_at ?? new Date().toISOString(),
             updated_at: new Date().toISOString(),
           };
           if (found) Object.assign(found, value);
           else items.push(value);
+          if (options.lostSaveResponse && !responseLost) {
+            responseLost = true;
+            await reply(
+              { message: "Response lost after commit", code: "500" },
+              503,
+            );
+            return;
+          }
           await reply(value);
           return;
         }
@@ -214,6 +318,22 @@ async function backend(
         await reply(invites.filter((i) => i.status === "pending"));
         return;
       }
+      if (url.pathname.endsWith("/inventory_sections")) {
+        sectionReads++;
+        if (sectionsFailing) {
+          await reply(
+            {
+              code: sectionsFailing === "schema" ? "PGRST205" : "500",
+              message: "Sections unavailable",
+            },
+            sectionsFailing === "schema" ? 404 : 503,
+          );
+          return;
+        }
+        const inv = url.searchParams.get("inventory_id")?.replace("eq.", "");
+        await reply(sections.filter((s) => !inv || s.inventory_id === inv));
+        return;
+      }
       if (url.pathname.endsWith("/items")) {
         const id = url.searchParams.get("id")?.replace("eq.", "");
         const inv = url.searchParams.get("inventory_id")?.replace("eq.", "");
@@ -236,6 +356,11 @@ async function backend(
   );
   return {
     items,
+    sections,
+    sectionReadCount: () => sectionReads,
+    restoreSections: () => {
+      sectionsFailing = undefined;
+    },
     inventories,
     restoreConnection: () => {
       failLoads = false;
@@ -252,7 +377,7 @@ async function signIn(page: Page) {
     .fill("test-password-123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Your inventory", exact: true }),
+    page.getByRole("heading", { name: "Items", exact: true }),
   ).toBeVisible();
 }
 async function addMilk(page: Page) {
@@ -284,6 +409,444 @@ function seedQuantity(items: MockItem[], quantity = 2) {
     updated_at: new Date().toISOString(),
   });
 }
+
+function seedSection(sections: Section[], inventory = inventoryId) {
+  sections.push({
+    id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    inventory_id: inventory,
+    name: "Supplies",
+    color: "#377CCC",
+    version: 1,
+    created_at: new Date().toISOString(),
+  });
+}
+
+test("missing sections backend shows one stable notice and recovers after setup", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const state = await backend(page, { failedSections: "schema" });
+  await signIn(page);
+  const notice = page.getByText(
+    "Sections aren’t available on the server yet. Please try again after the app setup is completed.",
+    { exact: true },
+  );
+  await expect(notice).toBeVisible();
+  expect(state.sectionReadCount()).toBe(1);
+  // Cover more than one polling interval: structural failures must not be retried
+  // in the background, nor cause the error banner to disappear and reappear.
+  await page.waitForTimeout(17000);
+  await expect(notice).toBeVisible();
+  expect(state.sectionReadCount()).toBe(1);
+  state.restoreSections();
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Section All items", exact: true })
+    .click();
+  await expect(notice).toHaveCount(0);
+});
+
+test("transient section failure stays visible during a pending refetch", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await backend(page, { failedSections: "transient" });
+  await signIn(page);
+  const notice = page.getByText(
+    "Couldn’t refresh sections. Your last loaded sections are kept. Pull to refresh to try again.",
+    { exact: true },
+  );
+  await expect(notice).toBeVisible();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  await page.route("**/rest/v1/inventory_sections?**", async (route) => {
+    started();
+    await gate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: "[]",
+    });
+  });
+  await pending;
+  await expect(notice).toBeVisible();
+  release();
+  await expect(notice).toHaveCount(0);
+});
+
+test("owner creates colored sections, assigns items and safely removes sections", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedQuantity(state.items);
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Add section", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Section name", exact: true })
+    .fill("Supplies");
+  await page.getByRole("button", { name: "Color Purple", exact: true }).click();
+  await page.getByRole("button", { name: "Save section", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Section Supplies", exact: true })
+    .click();
+  await expect(page.getByText("0 in this view", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "＋ Add item", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Supplies", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("textbox", { name: "Item name", exact: true })
+    .fill("Tape");
+  await page.getByRole("button", { name: "Save item", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Tape, 1 pcs", exact: true }),
+  ).toBeVisible();
+  const tape = state.items.find((i) => i.name === "Tape")!;
+  expect(tape.section_id).toBe(state.sections[0].id);
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await page.screenshot({
+    path: "test-results/sections-picker.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "Manage Supplies", exact: true })
+    .click();
+  await page
+    .getByRole("textbox", { name: "Section name", exact: true })
+    .fill("Equipment");
+  await page.getByRole("button", { name: "Color Rose", exact: true }).click();
+  await page.getByRole("button", { name: "Save section", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Manage Equipment", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Remove section", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Its items will move to Unsorted for everyone. No items or quantities will be deleted.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(state.sections).toHaveLength(1);
+  await page
+    .getByRole("button", { name: "Remove section", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Remove section", exact: true })
+    .last()
+    .click();
+  await page
+    .getByRole("button", { name: "Section Unsorted", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Tape, 1 pcs", exact: true }),
+  ).toBeVisible();
+  expect(state.items.find((i) => i.id === tape.id)).toMatchObject({
+    section_id: null,
+    quantity: 1,
+    version: 2,
+  });
+});
+
+test("shared member assigns items but cannot manage sections", async ({
+  page,
+}) => {
+  const state = await backend(page, { shared: true, member: true });
+  seedSection(state.sections, sharedId);
+  seedQuantity(state.items);
+  state.items[0].inventory_id = sharedId;
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "My inventory ▾", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: /Family/ })
+    .first()
+    .click();
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Add section", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Manage Supplies", exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Section All items", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Milk, 2 bottles", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit item", exact: true }).click();
+  await page.getByRole("button", { name: "Unsorted", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Section Supplies", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  // The mock commits before the client finishes refetching and navigating back.
+  // Wait for that navigation before opening another route.
+  await expect(page).toHaveURL(/\/item\/[^/?]+\?/);
+  await expect(
+    page.getByRole("button", { name: "Edit item", exact: true }),
+  ).toBeVisible();
+  expect(state.items[0].section_id).toBe(state.sections[0].id);
+  await page.goto(
+    `/section-edit?inventory=${sharedId}&id=${state.sections[0].id}`,
+  );
+  await expect(
+    page.getByText("Only the inventory owner can manage sections."),
+  ).toBeVisible();
+});
+
+test("section save failure and remote conflict retain the original draft until explicit reload", async ({
+  page,
+}) => {
+  const state = await backend(page, { failedSectionSave: true });
+  seedSection(state.sections);
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Manage Supplies", exact: true })
+    .click();
+  const name = page.getByRole("textbox", { name: "Section name", exact: true });
+  await name.fill("My draft");
+  await page.getByRole("button", { name: "Save section", exact: true }).click();
+  await expect(name).toHaveValue("My draft");
+  await expect(
+    page.getByText(
+      "Couldn’t complete this request. Check your connection and try again.",
+    ),
+  ).toBeVisible();
+  state.sections[0].name = "Remote name";
+  state.sections[0].version = 2;
+  await page.waitForResponse((r) =>
+    new URL(r.url()).pathname.endsWith("/inventory_sections"),
+  );
+  await expect(name).toHaveValue("My draft");
+  await page.getByRole("button", { name: "Save section", exact: true }).click();
+  await expect(
+    page.getByText(
+      /Someone changed or removed this section before your change was saved/,
+    ),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Reload section", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(name).toHaveValue("My draft");
+  await page
+    .getByRole("button", { name: "Reload section", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
+  await expect(name).toHaveValue("Remote name");
+});
+
+test("remotely removed selected section falls back to All items and keeps an exact-amount draft", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedSection(state.sections);
+  seedQuantity(state.items);
+  state.items[0].section_id = state.sections[0].id;
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Section Supplies", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Set Milk quantity", exact: true })
+    .click();
+  const field = page.getByRole("textbox", {
+    name: "Quantity for Milk",
+    exact: true,
+  });
+  await field.fill("4");
+  state.sections.splice(0);
+  state.items[0].section_id = null;
+  state.items[0].version++;
+  await page.waitForResponse((r) =>
+    new URL(r.url()).pathname.endsWith("/inventory_sections"),
+  );
+  await expect(
+    page.getByRole("button", { name: "Open sections", exact: true }),
+  ).toContainText("All items");
+  await expect(field).toHaveValue("4");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByText("Your attempted amount: 4 bottles"),
+  ).toBeVisible();
+  expect(state.items[0].quantity).toBe(2);
+});
+
+test("remote reassignment does not hide an unsaved quantity draft", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedSection(state.sections);
+  seedQuantity(state.items);
+  state.items[0].section_id = state.sections[0].id;
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Open sections", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Section Supplies", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Set Milk quantity", exact: true })
+    .click();
+  const field = page.getByRole("textbox", {
+    name: "Quantity for Milk",
+    exact: true,
+  });
+  await field.fill("4");
+  state.items[0].section_id = null;
+  state.items[0].version++;
+  await page.waitForResponse((r) =>
+    new URL(r.url()).pathname.endsWith("/items"),
+  );
+  await expect(field).toHaveValue("4");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByText("Your attempted amount: 4 bottles"),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Reload quantity", exact: true })
+    .click();
+  await expect(page.getByText("No items match your search")).toBeVisible();
+  expect(state.items[0].quantity).toBe(2);
+});
+
+test("a lost response retries the same request without saving twice", async ({
+  page,
+}) => {
+  const state = await backend(page, { lostSaveResponse: true });
+  seedQuantity(state.items);
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Set Milk quantity", exact: true })
+    .click();
+  const field = page.getByRole("textbox", {
+    name: "Quantity for Milk",
+    exact: true,
+  });
+  await field.fill("0.5");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Couldn’t complete this request. Check your connection and try again.",
+    ),
+  ).toBeVisible();
+  const request = state.items[0].last_mutation_id;
+  expect(request).toBeTruthy();
+  expect(state.items[0].version).toBe(2);
+  await expect(field).toHaveValue("0.5");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 0.5 bottles", exact: true }),
+  ).toBeVisible();
+  expect(state.items[0].version).toBe(2);
+  expect(state.items[0].last_mutation_id).toBe(request);
+  await page
+    .getByRole("button", { name: "Increase Milk quantity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 1.5 bottles", exact: true }),
+  ).toBeVisible();
+  expect(state.items[0].last_mutation_id).not.toBe(request);
+});
+
+test("section-only draft triggers discard confirmation and survives cancellation", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedSection(state.sections);
+  seedQuantity(state.items);
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Milk, 2 bottles", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Edit item", exact: true }).click();
+  await page.getByRole("button", { name: "Unsorted", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Section Supplies", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Go back", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Discard changes?", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Supplies", exact: true }),
+  ).toBeVisible();
+  expect(state.items[0].section_id).toBeUndefined();
+});
+
+test("overview counts records across units and remains usable on a narrow screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  const state = await backend(page);
+  seedQuantity(state.items, 999998.999);
+  state.items[0].name =
+    "Rechargeable batteries for the shared equipment cupboard";
+  state.items.push({
+    ...state.items[0],
+    id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    name: "Tape",
+    quantity: 0,
+    unit: "pcs",
+  });
+  await signIn(page);
+  await expect(page.getByTestId("inventory-total")).toHaveText("2");
+  await expect(page.getByTestId("inventory-available")).toHaveText("1");
+  await expect(page.getByTestId("inventory-out-of-stock")).toHaveText("1");
+  await page.getByRole("button", { name: "Available", exact: true }).click();
+  await expect(page.getByTestId("inventory-total")).toHaveText("2");
+  const increase = page.getByRole("button", {
+    name: `Increase ${state.items[0].name} quantity`,
+    exact: true,
+  });
+  await increase.scrollIntoViewIfNeeded();
+  const bounds = await increase.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.width).toBeGreaterThanOrEqual(44);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(320);
+  await page.screenshot({
+    path: "test-results/finance-ui-narrow.png",
+    fullPage: true,
+  });
+});
 
 test("dashboard quantity controls preserve fractions, stock filters, and item identity", async ({
   page,
@@ -409,7 +972,7 @@ test("dashboard conflict retains draft and requires explicit reload", async ({
     .getByRole("button", { name: "Save quantity", exact: true })
     .click();
   await expect(
-    page.getByText("This item changed. Reload it before trying again."),
+    page.getByText("Someone updated this item before your change was saved."),
   ).toBeVisible();
   await expect(field).toHaveValue("4");
   await expect(
@@ -437,7 +1000,7 @@ test("rapid dashboard taps cannot overlap saves and maximum quantity disables in
   seedQuantity(state.items, 999998);
   await signIn(page);
   let writes = 0;
-  await page.route("**/rest/v1/rpc/save_item", async (route) => {
+  await page.route("**/rest/v1/rpc/save_item_with_section", async (route) => {
     writes++;
     await new Promise((resolve) => setTimeout(resolve, 700));
     await route.fallback();
@@ -573,7 +1136,7 @@ test("reports a concurrent edit and prevents another overwrite attempt", async (
   await page.getByRole("textbox", { name: "Quantity", exact: true }).fill("3");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(
-    page.getByText("This item changed. Reload it before trying again."),
+    page.getByText("Someone updated this item before your change was saved."),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Reload item", exact: true }),

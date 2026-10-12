@@ -19,7 +19,9 @@ The product name is undecided; **Inventory Dev** is a development placeholder.
 
 **Invitation delivery:** Day 1 currently stores email-addressed invitations and displays them in the recipient’s app after verified sign-in. It does not send invitation emails. Choosing/configuring a transactional mail provider is a separate deployment decision. Supabase handles signup/reset emails.
 
-**Not included:** offline editing/sync, OAuth, categories, photos, expiration tracking, scheduling or agent automation. These are Day-2 candidates.
+**Sections backend deployed October 12, 2026:** notebook-style inventories with named, colored sections, optional item assignment, All items and Unsorted views, owner-only section management and clearer conflict notices. See [sections deployment notes](docs/SECTIONS_DEPLOYMENT.md) for live-device acceptance checks.
+
+**Not included:** offline editing/sync, OAuth, nested categories, photos, expiration tracking, scheduling or agent automation. These are Day-2 candidates.
 
 ## Run on Windows
 
@@ -34,7 +36,7 @@ Copy-Item .env.example .env
 
 The project URL and active Supabase **publishable** key are included in the example. Do not put a service-role/secret key in the frontend or commit `.env`.
 
-The backend is already deployed to the supplied Supabase project. Complete the Auth dashboard settings in [the backend setup guide](docs/BACKEND_SETUP.md), then:
+The backend, including the notebook sections migration, is deployed to the supplied Supabase project. Follow [sections deployment notes](docs/SECTIONS_DEPLOYMENT.md) for remaining acceptance checks and complete the Auth dashboard settings in [the backend setup guide](docs/BACKEND_SETUP.md), then:
 
 ```powershell
 npm run web
@@ -77,4 +79,4 @@ Read [AGENTS.md](AGENTS.md) before changing the project. Keep credentials and pr
 
 ## Current deployment status
 
-Hosted migrations and the account-deletion function are deployed, and initial SQL/security smoke checks pass. Auth settings, email delivery, EAS setup, Apple provisioning and real-device testing remain required before describing this app as production-ready. See [TEST_RESULTS.md](docs/TEST_RESULTS.md) for verified results and limits.
+The hosted migrations, including notebook sections, and account-deletion function are deployed. Sections RLS/RPC privilege checks pass. The security advisor flags disabled leaked-password protection; this Auth setting remains a release follow-up. Auth/email configuration, EAS setup, Apple provisioning and real-device testing remain required before describing this app as production-ready. See [TEST_RESULTS.md](docs/TEST_RESULTS.md) for verified results and limits.
