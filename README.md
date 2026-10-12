@@ -7,6 +7,7 @@ The product name is undecided; **Inventory Dev** is a development placeholder.
 
 - Email/password registration, email confirmation, sign-in/out, reset/change password.
 - Dashboard with item name, quantity and unit, availability filters, search and refresh.
+- Dashboard quantity +/− controls and exact-amount editing; item details can mark stock as zero.
 - Item creation, details, editing, confirmed deletion, optional notes and input validation.
 - One private inventory per verified user, plus multiple shared inventories.
 - Owners create/rename/delete shared inventories, invite members by email address, revoke invitations and remove members.

@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   Text,
@@ -13,6 +15,7 @@ import { router } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../features/workspace";
 import { useAuth } from "../../lib/auth";
+import { QuantityControls } from "../../features/quantity-controls";
 import { api } from "../../lib/api";
 import {
   Button,
@@ -172,134 +175,154 @@ export default function InventoryScreen() {
   );
   return (
     <SafeAreaView style={styles.page}>
-      <FlatList
-        data={initialError || initialLoading ? [] : visible}
-        keyExtractor={(i) => i.id}
-        contentContainerStyle={{
-          padding: 22,
-          paddingBottom: 16,
-          maxWidth: 640,
-          width: "100%",
-          alignSelf: "center",
-          flexGrow: 1,
-        }}
-        keyboardShouldPersistTaps="handled"
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={reload}
-            tintColor={colors.teal}
-          />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : Platform.OS === "android"
+              ? "height"
+              : undefined
         }
-        ListHeaderComponent={heading}
-        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-        renderItem={({ item }) => (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}${Number(item.quantity) === 0 ? ", out of stock" : ""}`}
-            onPress={() =>
-              router.push({
-                pathname: "/item/[id]",
-                params: { id: item.id, inventory: item.inventory_id },
-              })
-            }
-            style={[styles.card, styles.between]}
-          >
-            <View style={[styles.row, { flex: 1 }]}>
-              <View
-                style={{
-                  backgroundColor: colors.pale,
-                  padding: 12,
-                  borderRadius: 12,
-                }}
+      >
+        <FlatList
+          data={initialError || initialLoading ? [] : visible}
+          keyExtractor={(i) => i.id}
+          contentContainerStyle={{
+            padding: 22,
+            paddingBottom: 16,
+            maxWidth: 640,
+            width: "100%",
+            alignSelf: "center",
+            flexGrow: 1,
+          }}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={reload}
+              tintColor={colors.teal}
+            />
+          }
+          ListHeaderComponent={heading}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          renderItem={({ item }) => (
+            <View style={styles.card}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}${Number(item.quantity) === 0 ? ", out of stock" : ""}`}
+                onPress={() =>
+                  router.push({
+                    pathname: "/item/[id]",
+                    params: { id: item.id, inventory: item.inventory_id },
+                  })
+                }
+                style={styles.between}
               >
-                <Ionicons name="cube-outline" color={colors.teal} size={22} />
-              </View>
-              <View style={{ flex: 1 }}>
+                <View style={[styles.row, { flex: 1 }]}>
+                  <View
+                    style={{
+                      backgroundColor: colors.pale,
+                      padding: 12,
+                      borderRadius: 12,
+                    }}
+                  >
+                    <Ionicons
+                      name="cube-outline"
+                      color={colors.teal}
+                      size={22}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.body, { fontWeight: "600" }]}>
+                      {item.name}
+                    </Text>
+                    {Number(item.quantity) === 0 && (
+                      <Text style={styles.error}>Out of stock</Text>
+                    )}
+                  </View>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text
+                    style={[styles.body, { fontWeight: "700", fontSize: 22 }]}
+                  >
+                    {Number(item.quantity).toLocaleString(undefined, {
+                      maximumFractionDigits: 3,
+                    })}
+                  </Text>
+                  <Text style={styles.small}>{item.unit}</Text>
+                </View>
+              </Pressable>
+              <QuantityControls item={item} />
+            </View>
+          )}
+          ListEmptyComponent={
+            initialError ? (
+              <ErrorState
+                text={
+                  accessDenied
+                    ? "You no longer have access to this inventory. Refresh your inventories."
+                    : "Couldn’t load your items. Check your connection and try again."
+                }
+                retry={reload}
+              />
+            ) : initialLoading ? (
+              <Skeleton />
+            ) : (
+              <View
+                style={{ alignItems: "center", gap: 12, paddingVertical: 48 }}
+              >
+                <Ionicons
+                  name="file-tray-outline"
+                  color={colors.muted}
+                  size={54}
+                />
                 <Text style={[styles.body, { fontWeight: "600" }]}>
-                  {item.name}
+                  {data.length
+                    ? "No items match your search"
+                    : "Your inventory starts here"}
                 </Text>
-                {Number(item.quantity) === 0 && (
-                  <Text style={styles.error}>Out of stock</Text>
+                <Text style={[styles.subtitle, { textAlign: "center" }]}>
+                  {data.length
+                    ? "Try a different search or availability filter."
+                    : "Add your first item to keep track of what you have."}
+                </Text>
+                {data.length > 0 && (
+                  <Button
+                    secondary
+                    title="Clear search and filters"
+                    onPress={() => {
+                      setSearch("");
+                      setFilter("All");
+                    }}
+                  />
                 )}
               </View>
-            </View>
-            <View style={{ alignItems: "flex-end" }}>
-              <Text style={[styles.body, { fontWeight: "700", fontSize: 22 }]}>
-                {Number(item.quantity).toLocaleString(undefined, {
-                  maximumFractionDigits: 3,
-                })}
-              </Text>
-              <Text style={styles.small}>{item.unit}</Text>
-            </View>
-          </Pressable>
-        )}
-        ListEmptyComponent={
-          initialError ? (
-            <ErrorState
-              text={
-                accessDenied
-                  ? "You no longer have access to this inventory. Refresh your inventories."
-                  : "Couldn’t load your items. Check your connection and try again."
-              }
-              retry={reload}
-            />
-          ) : initialLoading ? (
-            <Skeleton />
-          ) : (
-            <View
-              style={{ alignItems: "center", gap: 12, paddingVertical: 48 }}
-            >
-              <Ionicons
-                name="file-tray-outline"
-                color={colors.muted}
-                size={54}
-              />
-              <Text style={[styles.body, { fontWeight: "600" }]}>
-                {data.length
-                  ? "No items match your search"
-                  : "Your inventory starts here"}
-              </Text>
-              <Text style={[styles.subtitle, { textAlign: "center" }]}>
-                {data.length
-                  ? "Try a different search or availability filter."
-                  : "Add your first item to keep track of what you have."}
-              </Text>
-              {data.length > 0 && (
-                <Button
-                  secondary
-                  title="Clear search and filters"
-                  onPress={() => {
-                    setSearch("");
-                    setFilter("All");
-                  }}
-                />
-              )}
-            </View>
-          )
-        }
-      />
-      <View
-        style={{
-          paddingHorizontal: 22,
-          paddingTop: 8,
-          paddingBottom: 12,
-          width: "100%",
-          maxWidth: 640,
-          alignSelf: "center",
-        }}
-      >
-        <Button
-          title="＋ Add item"
-          disabled={!selected || initialError}
-          onPress={() =>
-            router.push({
-              pathname: "/item/new",
-              params: { inventory: selected!.id },
-            })
+            )
           }
         />
-      </View>
+        <View
+          style={{
+            paddingHorizontal: 22,
+            paddingTop: 8,
+            paddingBottom: 12,
+            width: "100%",
+            maxWidth: 640,
+            alignSelf: "center",
+          }}
+        >
+          <Button
+            title="＋ Add item"
+            disabled={!selected || initialError}
+            onPress={() =>
+              router.push({
+                pathname: "/item/new",
+                params: { inventory: selected!.id },
+              })
+            }
+          />
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

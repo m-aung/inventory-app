@@ -126,11 +126,14 @@ async function backend(
             await reply({ message: "Temporary failure", code: "500" }, 503);
             return;
           }
-          if (options.conflict && p.p_version !== null) {
+          const found = items.find((i) => i.id === p.p_id);
+          if (
+            (options.conflict && p.p_version !== null) ||
+            (found && p.p_version !== found.version)
+          ) {
             await reply({ message: "This item changed", code: "40001" }, 409);
             return;
           }
-          const found = items.find((i) => i.id === p.p_id);
           const value = {
             id: p.p_id,
             inventory_id: p.p_inventory,
@@ -267,6 +270,189 @@ async function addMilk(page: Page) {
     page.getByRole("button", { name: "Milk, 2 bottles", exact: true }),
   ).toBeVisible();
 }
+
+function seedQuantity(items: MockItem[], quantity = 2) {
+  items.push({
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    inventory_id: inventoryId,
+    name: "Milk",
+    quantity,
+    unit: "bottles",
+    notes: "Keep this note",
+    version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+}
+
+test("dashboard quantity controls preserve fractions, stock filters, and item identity", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedQuantity(state.items, 1.001);
+  await signIn(page);
+  const decrease = page.getByRole("button", {
+    name: "Decrease Milk quantity",
+    exact: true,
+  });
+  await decrease.click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 0.001 bottles", exact: true }),
+  ).toBeVisible();
+  await decrease.click();
+  await expect(
+    page.getByRole("button", {
+      name: "Milk, 0 bottles, out of stock",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(decrease).toBeDisabled();
+  await page.getByRole("button", { name: "Out of stock", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Increase Milk quantity", exact: true })
+    .click();
+  await expect(page.getByText("No items match your search")).toBeVisible();
+  await page.getByRole("button", { name: "All", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Set Milk quantity", exact: true })
+    .click();
+  const field = page.getByRole("textbox", {
+    name: "Quantity for Milk",
+    exact: true,
+  });
+  await field.fill("999999.001");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(page.getByText("Quantity cannot exceed 999,999.")).toBeVisible();
+  await field.fill("0,5");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 0.5 bottles", exact: true }),
+  ).toBeVisible();
+  expect(state.items[0]).toMatchObject({
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    quantity: 0.5,
+    notes: "Keep this note",
+    version: 5,
+  });
+  await page
+    .getByRole("button", { name: "Milk, 0.5 bottles", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Mark out of stock", exact: true })
+    .click();
+  await expect(
+    page.getByText("Out of stock", { exact: true }).filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Mark out of stock", exact: true }),
+  ).toBeDisabled();
+});
+
+test("failed dashboard quantity save retains the draft and retries safely", async ({
+  page,
+}) => {
+  const state = await backend(page, { failedSave: true });
+  seedQuantity(state.items);
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Set Milk quantity", exact: true })
+    .click();
+  const field = page.getByRole("textbox", {
+    name: "Quantity for Milk",
+    exact: true,
+  });
+  await field.fill("0.25");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Couldn’t complete this request. Check your connection and try again.",
+    ),
+  ).toBeVisible();
+  await expect(field).toHaveValue("0.25");
+  expect(state.items[0].quantity).toBe(2);
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 0.25 bottles", exact: true }),
+  ).toBeVisible();
+});
+
+test("dashboard conflict retains draft and requires explicit reload", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedQuantity(state.items);
+  await signIn(page);
+  await page
+    .getByRole("button", { name: "Set Milk quantity", exact: true })
+    .click();
+  const field = page.getByRole("textbox", {
+    name: "Quantity for Milk",
+    exact: true,
+  });
+  await field.fill("4");
+  state.items[0].quantity = 7;
+  state.items[0].version = 2;
+  // Polling must preserve the draft and its original version.
+  await page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/items"),
+  );
+  await expect(field).toHaveValue("4");
+  await page
+    .getByRole("button", { name: "Save quantity", exact: true })
+    .click();
+  await expect(
+    page.getByText("This item changed. Reload it before trying again."),
+  ).toBeVisible();
+  await expect(field).toHaveValue("4");
+  await expect(
+    page.getByRole("button", { name: "Save quantity", exact: true }),
+  ).toBeDisabled();
+  expect(state.items[0].quantity).toBe(7);
+  await page
+    .getByRole("button", { name: "Reload quantity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 7 bottles", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Increase Milk quantity", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Milk, 8 bottles", exact: true }),
+  ).toBeVisible();
+});
+
+test("rapid dashboard taps cannot overlap saves and maximum quantity disables increase", async ({
+  page,
+}) => {
+  const state = await backend(page);
+  seedQuantity(state.items, 999998);
+  await signIn(page);
+  let writes = 0;
+  await page.route("**/rest/v1/rpc/save_item", async (route) => {
+    writes++;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.fallback();
+  });
+  const increase = page.getByRole("button", {
+    name: "Increase Milk quantity",
+    exact: true,
+  });
+  await increase.dblclick();
+  await expect(increase).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Milk, 999999 bottles", exact: true }),
+  ).toBeVisible();
+  expect(writes).toBe(1);
+});
 
 test("sign-in, create, read, edit, filter, and delete with confirmation", async ({
   page,

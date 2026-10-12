@@ -5,7 +5,7 @@ export default defineConfig({
   expect: { timeout: 15000 },
   fullyParallel: true,
   use: {
-    baseURL: "http://localhost:8081",
+    baseURL: `http://localhost:${process.env.E2E_PORT || "8081"}`,
     viewport: { width: 390, height: 844 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -18,8 +18,8 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
   webServer: {
-    command: "npx expo start --web --port 8081",
-    url: "http://localhost:8081",
+    command: `npx expo start --web --port ${process.env.E2E_PORT || "8081"}`,
+    url: `http://localhost:${process.env.E2E_PORT || "8081"}`,
     timeout: 180000,
     reuseExistingServer: false,
     env: {

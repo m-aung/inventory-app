@@ -16,6 +16,7 @@ import {
 } from "../../../components/ui";
 import { useFeedback } from "../../../components/feedback";
 import { useAuth } from "../../../lib/auth";
+import { QuantityControls } from "../../../features/quantity-controls";
 export default function Details() {
   const { id, inventory } = useLocalSearchParams<{
     id: string;
@@ -108,6 +109,7 @@ export default function Details() {
         Updated {new Date(item.updated_at).toLocaleString()}
       </Text>
       {error ? <Notice text={error} /> : null}
+      <QuantityControls item={item} markOnly />
       <Button
         title="Edit item"
         disabled={mutation.isPending}

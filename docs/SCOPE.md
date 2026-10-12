@@ -25,6 +25,8 @@ Confirmed by the user on October 10, 2026:
 
 Zero means out of stock. Positive means available. Duplicate item names are allowed. Summaries count item records, not a sum of incompatible units. Search is case-insensitive by name in the selected inventory; filters apply within it.
 
+Dashboard quantity controls (approved October 11, 2026): +/− save immediately in steps of one selected unit, preserve three-decimal precision and clamp at 0/999,999. Tap the amount to enter an exact quantity; zero marks it out of stock. Item details also offer “Mark out of stock.” Controls disable during a save; failures retain exact-entry drafts, and conflicts require explicit reload. Updates use the existing version-aware RPC; no backend deployment is needed.
+
 ## Screen inventory
 
 Sign in; registration; check-email/resend; forgot password/reset-request confirmation; auth callback; new/change password; dashboard; item details; add/edit item; inventory picker/invitation inbox; create shared inventory; manage shared inventory/members/invites; settings; confirm account deletion; about your data.
