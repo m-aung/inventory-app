@@ -63,6 +63,14 @@ Database tests execute the versioned migration in PGlite PostgreSQL and exercise
 
 The dashboard screenshot in this directory shows the running app with test data.
 
+## PR #4 browser-test navigation regression — October 12, 2026
+
+- CI run 38269729413 passed code checks and web/iOS exports, but failed the shared-member section-management browser test (30 other scenarios passed).
+- Reproduced locally in one of six repeated runs. The failure snapshot showed item details, rather than section management: the test opened a new URL before the save handler finished refetching and navigating back.
+- The test now waits for the details URL and visible Edit item action before navigating to section management. The owner-only permission assertion remains intact; application and backend behavior are unchanged.
+- `npm run check` passed TypeScript, ESLint, and all 40 unit/database tests. The complete two-worker Chromium suite passed all 31 scenarios after the fix. Browser tests use mocked Supabase responses.
+- The corrected shared-member test also passed 10 consecutive executions with two workers (55 seconds).
+
 ## Still required before beta release
 
 Authentication/email configuration, two-account integration using real Auth sessions, signed iPhone build, native callbacks and gestures, and TestFlight testing have not been completed. Hosted SQL smoke tests switch database roles with transaction-local test identities; they do not verify registration or email delivery. The performance advisor reports three unused indexes on this new empty database; retain them for the expected membership, inventory-item and invitation queries. An iOS JavaScript export is not a signed native app. Follow TEST_PLAN.md and record real build IDs and outcomes here after those checks.

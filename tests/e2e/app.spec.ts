@@ -598,6 +598,12 @@ test("shared member assigns items but cannot manage sections", async ({
     .getByRole("button", { name: "Section Supplies", exact: true })
     .click();
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  // The mock commits before the client finishes refetching and navigating back.
+  // Wait for that navigation before opening another route.
+  await expect(page).toHaveURL(/\/item\/[^/?]+\?/);
+  await expect(
+    page.getByRole("button", { name: "Edit item", exact: true }),
+  ).toBeVisible();
   expect(state.items[0].section_id).toBe(state.sections[0].id);
   await page.goto(
     `/section-edit?inventory=${sharedId}&id=${state.sections[0].id}`,
