@@ -24,6 +24,16 @@ Browser tests use HTTP fixtures for deterministic UI/navigation checks. They cov
 
 ## Real iPhone
 
+### Multiple-device and section acceptance (pending)
+
+- Sign into one disposable account independently on two devices. Confirm both sessions remain active under the hosted Auth configuration and both see the same private inventory.
+- Create/change/delete an item on one device; verify the other converges after polling/manual refresh and on returning to the foreground. Repeat with two accounts in a shared inventory. Record observed delays rather than treating polling intervals as guarantees.
+- Concurrent +/− and exact-amount updates must reject stale versions, preserve drafts and require explicit reload; verify the final quantity is never silently overwritten.
+- After deploying the sections migration, verify owner-only structure management and member item assignment, cross-device rename/recolor/move/remove visibility, safe fallback when a selected section disappears, and preserved items on removal.
+- Search, selected notebook/section and drafts stay local to each device. Repeat after membership revocation and a temporary connection failure. These checks need live sessions/devices; mocked browser and PGlite tests alone cannot establish acceptance.
+
+### Native acceptance
+
 - Development build installs and launches from Windows-hosted Metro.
 - All screens fit safe areas; scrolling and keyboards do not cover fields/buttons.
 - Session survives app restart; sign-out clears it; another account sees no old inventory.

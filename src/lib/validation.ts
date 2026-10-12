@@ -46,3 +46,27 @@ export const inventoryNameSchema = z
   .max(80, "Use at most 80 characters.");
 export type ItemInput = z.output<typeof itemSchema>;
 export type ItemDraft = z.input<typeof itemSchema>;
+export const sectionColors = [
+  { name: "Blue", value: "#377CCC" },
+  { name: "Purple", value: "#8D64C8" },
+  { name: "Amber", value: "#B77728" },
+  { name: "Teal", value: "#18846D" },
+  { name: "Rose", value: "#BF5976" },
+] as const;
+export const sectionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Enter a section name.")
+    .max(80, "Use at most 80 characters.")
+    .refine(
+      (name) => !["all items", "unsorted"].includes(name.toLowerCase()),
+      "All items and Unsorted are reserved names.",
+    ),
+  color: z
+    .string()
+    .refine(
+      (color) => sectionColors.some((c) => c.value === color),
+      "Choose a section color.",
+    ),
+});

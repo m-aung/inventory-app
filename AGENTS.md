@@ -3,7 +3,7 @@ This is an Expo/React Native mobile application. Prioritize mobile-first pattern
 ## Inventory project rules
 
 - Read README.md and docs/SCOPE.md first. Product name is undecided; do not invent branding or release identities.
-- Day 1 is online-only, category-agnostic, email/password, private/shared inventories. Do not silently add offline sync, OAuth, photos, categories or bot automation.
+- Day 1 is online-only, domain-agnostic, email/password, private/shared inventories. Named, colored sections were approved for release scope on October 12, 2026; see docs/SCOPE.md for implementation status and docs/SECTIONS_DEPLOYMENT.md before distributing the sections client. Do not silently add offline sync, OAuth, photos, nested categories or bot automation.
 - Keep app code in src/, schema/RLS/RPC code in versioned supabase/migrations/, and server-only account deletion in supabase/functions/.
 - Never ship a service-role/secret key in EXPO_PUBLIC variables, frontend source, tests or git. Never log passwords, tokens or private item data.
 - Base table mutations are prohibited; preserve verified-user/owner checks in RPCs and RLS reads. New functions must explicitly revoke PUBLIC/anon execution.

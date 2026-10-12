@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -16,7 +16,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../features/workspace";
 import { useAuth } from "../../lib/auth";
 import { QuantityControls } from "../../features/quantity-controls";
+import { sectionsFailureMessage, useSections } from "../../features/sections";
 import { api } from "../../lib/api";
+import type { Item } from "../../lib/types";
 import {
   Button,
   colors,
@@ -27,13 +29,39 @@ import {
 } from "../../components/ui";
 
 export default function InventoryScreen() {
-  const { selected, inventories, loading, error, refresh } = useWorkspace();
+  const {
+    selected,
+    inventories,
+    loading,
+    error,
+    refresh,
+    section,
+    selectSection,
+  } = useWorkspace();
+  const sections = useSections(selected?.id);
+  const activeSection = sections.data?.find((s) => s.id === section);
+  const sectionMissing =
+    section !== "all" &&
+    section !== "unsorted" &&
+    sections.isSuccess &&
+    !activeSection;
+  const currentSection = sectionMissing ? "all" : section;
+  useEffect(() => {
+    if (sectionMissing && selected) selectSection(selected.id, "all");
+  }, [sectionMissing, selected, selectSection]);
+  const sectionName =
+    currentSection === "all"
+      ? "All items"
+      : currentSection === "unsorted"
+        ? "Unsorted"
+        : (activeSection?.name ?? "Loading section…");
   const { session } = useAuth();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"All" | "Available" | "Out of stock">(
     "All",
   );
   const [refreshing, setRefreshing] = useState(false);
+  const [editingItems, setEditingItems] = useState<Record<string, Item>>({});
   const query = useQuery({
     queryKey: ["items", session?.user.id, selected?.id],
     queryFn: () => api.items(selected!.id),
@@ -41,27 +69,42 @@ export default function InventoryScreen() {
     refetchInterval: 15000,
   });
   const data = useMemo(() => query.data ?? [], [query.data]);
+  const selectedInventoryId = selected?.id;
   const visible = useMemo(
     () =>
-      data
+      [
+        ...data,
+        ...Object.values(editingItems).filter(
+          (item) =>
+            item.inventory_id === selectedInventoryId &&
+            !data.some((entry) => entry.id === item.id),
+        ),
+      ]
         .filter(
           (item) =>
-            item.name
+            (editingItems[item.id] &&
+              item.inventory_id === selectedInventoryId) ||
+            (item.name
               .toLocaleLowerCase()
               .includes(search.toLocaleLowerCase().trim()) &&
-            (filter === "All" ||
-              (filter === "Available"
-                ? Number(item.quantity) > 0
-                : Number(item.quantity) === 0)),
+              (currentSection === "all" ||
+                (currentSection === "unsorted"
+                  ? !item.section_id
+                  : item.section_id === currentSection)) &&
+              (filter === "All" ||
+                (filter === "Available"
+                  ? Number(item.quantity) > 0
+                  : Number(item.quantity) === 0))),
         )
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [data, search, filter],
+    [data, search, filter, currentSection, editingItems, selectedInventoryId],
   );
   async function reload() {
     setRefreshing(true);
     try {
       await refresh();
       await query.refetch();
+      await sections.refetch();
     } finally {
       setRefreshing(false);
     }
@@ -76,32 +119,144 @@ export default function InventoryScreen() {
   const heading = (
     <View style={{ gap: 20, marginBottom: 20 }}>
       <View style={styles.between}>
-        <View style={styles.row}>
-          <Ionicons name="cube-outline" color={colors.teal} size={24} />
-          <Text style={styles.label}>Inventory</Text>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${selected?.name ?? "Choose inventory"} ▾`}
+          accessibilityState={{
+            disabled: Object.keys(editingItems).length > 0,
+          }}
+          disabled={Object.keys(editingItems).length > 0}
+          onPress={() => router.push("/inventories")}
+          style={{ flex: 1, minHeight: 44, justifyContent: "center" }}
+        >
+          <View style={styles.row}>
+            <Text style={[styles.body, { fontWeight: "600", flexShrink: 1 }]}>
+              {selected?.name ?? "Choose inventory"}
+            </Text>
+            <Ionicons name="chevron-down" size={18} color={colors.ink} />
+          </View>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Settings"
           onPress={() => router.push("/settings")}
-          style={{ padding: 10 }}
+          style={{
+            padding: 12,
+            borderRadius: 24,
+            backgroundColor: colors.card,
+          }}
         >
           <Ionicons name="settings-outline" color={colors.ink} size={24} />
         </Pressable>
       </View>
-      <View>
-        <Text accessibilityRole="header" style={styles.title}>
-          Your inventory
+      {Object.keys(editingItems).length > 0 && (
+        <Text style={styles.small}>
+          Save or cancel your amount edit before switching notebooks.
         </Text>
-        <Text style={[styles.subtitle, { marginTop: 6 }]}>
-          Everything you have, in one place.
-        </Text>
-      </View>
-      <Button
-        secondary
-        title={`${selected?.name ?? "Choose inventory"} ▾`}
-        onPress={() => router.push("/inventories")}
-      />
+      )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open sections"
+        disabled={!selected}
+        onPress={() =>
+          router.push({
+            pathname: "/sections",
+            params: { inventory: selected!.id },
+          })
+        }
+        style={[styles.between, styles.input]}
+      >
+        <View style={[styles.row, { flex: 1 }]}>
+          <View
+            style={{
+              width: 9,
+              height: 9,
+              borderRadius: 5,
+              backgroundColor: activeSection?.color ?? colors.muted,
+            }}
+          />
+          <Text style={[styles.body, { flex: 1, fontWeight: "600" }]}>
+            {sectionName}
+          </Text>
+        </View>
+        <Text style={styles.link}>Sections</Text>
+      </Pressable>
+      {sections.isError && (
+        <Notice text={sectionsFailureMessage(sections.setupRequired)} />
+      )}
+      {!initialLoading && !initialError && selected && (
+        <View
+          style={{
+            backgroundColor: colors.hero,
+            borderRadius: 24,
+            padding: 24,
+            gap: 12,
+          }}
+        >
+          <Text
+            style={{ color: colors.heroMuted, fontSize: 13, letterSpacing: 1 }}
+          >
+            TOTAL ITEM RECORDS
+          </Text>
+          <Text
+            testID="inventory-total"
+            style={{
+              color: colors.heroText,
+              fontSize: 56,
+              fontWeight: "500",
+              letterSpacing: -2,
+              fontVariant: ["tabular-nums"],
+            }}
+          >
+            {data.length.toLocaleString()}
+          </Text>
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              gap: 24,
+              borderTopWidth: 1,
+              borderTopColor: colors.heroLine,
+              paddingTop: 16,
+            }}
+          >
+            <View style={{ gap: 4 }}>
+              <Text
+                testID="inventory-available"
+                style={{
+                  color: colors.heroText,
+                  fontSize: 20,
+                  fontVariant: ["tabular-nums"],
+                }}
+              >
+                {data
+                  .filter((i) => Number(i.quantity) > 0)
+                  .length.toLocaleString()}
+              </Text>
+              <Text style={{ color: colors.heroMuted, fontSize: 13 }}>
+                Available
+              </Text>
+            </View>
+            <View style={{ gap: 4 }}>
+              <Text
+                testID="inventory-out-of-stock"
+                style={{
+                  color: colors.heroText,
+                  fontSize: 20,
+                  fontVariant: ["tabular-nums"],
+                }}
+              >
+                {data
+                  .filter((i) => Number(i.quantity) === 0)
+                  .length.toLocaleString()}
+              </Text>
+              <Text style={{ color: colors.heroMuted, fontSize: 13 }}>
+                Out of stock
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
       <View style={[styles.row, styles.input]}>
         <Ionicons name="search-outline" size={20} color={colors.muted} />
         <TextInput
@@ -136,10 +291,10 @@ export default function InventoryScreen() {
             onPress={() => setFilter(label)}
             style={{
               minHeight: 44,
-              paddingHorizontal: 16,
+              paddingHorizontal: 14,
               justifyContent: "center",
               borderRadius: 12,
-              backgroundColor: label === filter ? colors.teal : colors.line,
+              backgroundColor: label === filter ? colors.ink : colors.bg,
             }}
           >
             <Text
@@ -153,20 +308,17 @@ export default function InventoryScreen() {
           </Pressable>
         ))}
       </View>
-      {!initialLoading && !initialError && (
-        <View style={styles.row}>
-          <View style={[styles.card, { flex: 1 }]}>
-            <Text style={[styles.title, { fontSize: 26 }]}>{data.length}</Text>
-            <Text style={styles.small}>Items</Text>
-          </View>
-          <View style={[styles.card, { flex: 1 }]}>
-            <Text style={[styles.title, { fontSize: 26 }]}>
-              {data.filter((i) => Number(i.quantity) === 0).length}
-            </Text>
-            <Text style={styles.small}>Out of stock</Text>
-          </View>
-        </View>
-      )}
+      <View style={styles.between}>
+        <Text
+          accessibilityRole="header"
+          style={[styles.body, { fontWeight: "600" }]}
+        >
+          Items
+        </Text>
+        {!initialLoading && !initialError && (
+          <Text style={styles.small}>{visible.length} in this view</Text>
+        )}
+      </View>
       {!accessDenied &&
       ((query.isError && query.data) || (error && inventories.length > 0)) ? (
         <Notice text="Couldn’t refresh. Showing previously loaded items." />
@@ -205,9 +357,20 @@ export default function InventoryScreen() {
             />
           }
           ListHeaderComponent={heading}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
+          renderItem={({ item, index }) => (
+            <View
+              style={{
+                backgroundColor: colors.card,
+                padding: 16,
+                gap: 10,
+                borderTopLeftRadius: index === 0 ? 20 : 0,
+                borderTopRightRadius: index === 0 ? 20 : 0,
+                borderBottomLeftRadius: index === visible.length - 1 ? 20 : 0,
+                borderBottomRightRadius: index === visible.length - 1 ? 20 : 0,
+                borderBottomWidth: index === visible.length - 1 ? 0 : 1,
+                borderBottomColor: colors.line,
+              }}
+            >
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}${Number(item.quantity) === 0 ? ", out of stock" : ""}`}
@@ -220,40 +383,40 @@ export default function InventoryScreen() {
                 style={styles.between}
               >
                 <View style={[styles.row, { flex: 1 }]}>
-                  <View
-                    style={{
-                      backgroundColor: colors.pale,
-                      padding: 12,
-                      borderRadius: 12,
-                    }}
-                  >
-                    <Ionicons
-                      name="cube-outline"
-                      color={colors.teal}
-                      size={22}
-                    />
-                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.body, { fontWeight: "600" }]}>
                       {item.name}
                     </Text>
-                    {Number(item.quantity) === 0 && (
-                      <Text style={styles.error}>Out of stock</Text>
-                    )}
+                    <Text
+                      style={
+                        Number(item.quantity) === 0
+                          ? styles.error
+                          : styles.small
+                      }
+                    >
+                      {Number(item.quantity) === 0
+                        ? "Out of stock"
+                        : "Available"}
+                    </Text>
                   </View>
                 </View>
-                <View style={{ alignItems: "flex-end" }}>
-                  <Text
-                    style={[styles.body, { fontWeight: "700", fontSize: 22 }]}
-                  >
-                    {Number(item.quantity).toLocaleString(undefined, {
-                      maximumFractionDigits: 3,
-                    })}
-                  </Text>
-                  <Text style={styles.small}>{item.unit}</Text>
-                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={colors.muted}
+                />
               </Pressable>
-              <QuantityControls item={item} />
+              <QuantityControls
+                item={item}
+                onDraftChange={(entry, editing) =>
+                  setEditingItems((current) => {
+                    const next = { ...current };
+                    if (editing) next[entry.id] = entry;
+                    else delete next[entry.id];
+                    return next;
+                  })
+                }
+              />
             </View>
           )}
           ListEmptyComponent={
@@ -294,6 +457,7 @@ export default function InventoryScreen() {
                     onPress={() => {
                       setSearch("");
                       setFilter("All");
+                      if (selected) selectSection(selected.id, "all");
                     }}
                   />
                 )}
@@ -317,7 +481,13 @@ export default function InventoryScreen() {
             onPress={() =>
               router.push({
                 pathname: "/item/new",
-                params: { inventory: selected!.id },
+                params: {
+                  inventory: selected!.id,
+                  section:
+                    currentSection === "all" || currentSection === "unsorted"
+                      ? ""
+                      : currentSection,
+                },
               })
             }
           />
