@@ -33,3 +33,12 @@ The quantity decrement now preserves three-decimal precision (including comma in
 - `npm run test:e2e`: all 17 Chromium tests passed, including six new regression cases for fractional decrement/save, missing users/sessions, temporary verification failures and explicit return to sign-in.
 - Browser tests use mocked Supabase responses. These results do not establish real-email or real-device acceptance.
 - No native dependency/configuration, migration or Edge Function changes in this fix.
+
+## Dashboard quantity controls — October 11, 2026
+
+- `npm run check` passed: TypeScript, ESLint and all 33 unit/database tests.
+- Added dashboard +/− and exact-quantity controls and a details “Mark out of stock” action. Changes use the existing version-aware save RPC; no migration, Edge Function or native dependency/configuration changes, and no backend deployment is required. Reload a Metro-connected development app to test; standalone installed builds need a new app build.
+- Browser coverage includes fractional decrement to zero, stock filters, exact comma-decimal entry and bounds, preserved item IDs/notes, failed-save retention/retry, rapid-tap protection, maximum quantity, and conflict/reload after background polling.
+- All 21 Chromium scenarios passed across a 20-pass full run and a successful rerun of the corrected status-label test. The original assertion matched hidden retained navigation screens; the correction restricts it to visible text. Six-worker startup timed out; successful runs used two workers (one for the targeted rerun), EXPO_OFFLINE=1 and E2E_PORT=8083. The standard Playwright Chromium runtime was installed for this workspace.
+- Browser tests use mocked HTTP responses. Live Supabase sharing, real iPhone keyboard/VoiceOver/touch checks and TestFlight acceptance remain separate and unverified for this feature.
+- User reported that the updated feature looks good on their phone on October 11, 2026. Build ID and detailed keyboard, VoiceOver, sharing/conflict and TestFlight outcomes were not supplied; this confirms visual acceptance only.

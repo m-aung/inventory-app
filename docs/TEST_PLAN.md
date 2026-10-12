@@ -32,6 +32,7 @@ Browser tests use HTTP fixtures for deterministic UI/navigation checks. They cov
 - Airplane mode causes a request error, not a queued write or fake success; reconnect and retry safely.
 - Large text, VoiceOver labels, contrast, touch targets and destructive confirmations work.
 - Background/foreground refreshes shared data and auth; revoked users lose server access.
+- Dashboard +/− saves one unit per tap; rapid taps during saving are disabled. Exact quantities work with the decimal keyboard, fractional reductions reach zero, and stock filters/counts update. Failed saves retain entered amounts; a second account's changes cause a conflict requiring explicit reload. Details “Mark out of stock” sets zero.
 - TestFlight build behaves the same without a Metro server.
 
 Record dates, build IDs, test accounts (no passwords/tokens), failures and fixes. Do not mark cloud/device checks passed based on local tests.
